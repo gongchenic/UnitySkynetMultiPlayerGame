@@ -1,0 +1,12 @@
+function start()
+	restartbutton:GetComponent("Button").onClick:AddListener(function()
+		loginlayer:SetActive(true)
+		self.gameObject:SetActive(false)
+	end)
+end
+
+function update()
+end
+
+function ondestroy()
+end

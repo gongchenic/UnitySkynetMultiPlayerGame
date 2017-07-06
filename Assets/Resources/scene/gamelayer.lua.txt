@@ -1,0 +1,27 @@
+local transport = require "net.transport"
+local battlemanager = require "battle.battlemanager"
+
+function start()
+	local function addRet(data)
+		battlemanager:createInstance(data)
+	end
+	transport:register("S_2_C_GAME_MATCH",addRet)
+
+	local function queryRet(data)
+		if battlemanager:getInstance() then
+			battlemanager:getInstance():sync(data)
+		end
+	end
+	transport:register("S_2_C_GAME_UPDATE",queryRet)
+end
+
+function update()
+	transport:receive()
+	if battlemanager:getInstance() then
+		battlemanager:getInstance():view()
+	end
+end
+
+function ondestroy()
+	transport:close()
+end

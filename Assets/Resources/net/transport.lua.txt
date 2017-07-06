@@ -1,0 +1,42 @@
+local socketclient = require "net.socketclient"
+local protocoder = require "proto.protocoder"
+local ActionMap = require "proto.actionmap"
+
+local proto = {}
+
+local transport = {}
+
+function transport:connect()
+	socketclient:connect()
+end
+
+function transport:close()
+	socketclient:close()
+end
+
+function transport:setid(id)
+	self.id = id
+	protocoder.id = id
+end
+
+function transport:register(name,callback)
+	proto[name] = callback
+end
+
+function transport:send(action,data)
+	local message = protocoder:encode(action,data)
+	socketclient:send(message)
+end
+
+function transport:receive()
+	local r = socketclient:receive()
+	if r then
+		local message = protocoder:decode(r)
+		local actionName = ActionMap.id2name[message.action_id]
+		if proto[actionName] then
+			proto[actionName](message.content)
+		end
+	end
+end
+
+return transport

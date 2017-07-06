@@ -1,0 +1,49 @@
+local battlemanager = require "battle.battlemanager"
+
+local nextdir = {x = 0, y = 0}
+local id = nil
+local endTime = 0
+
+local function PlayAnimation(ani,startTime,duration,loop)
+	if startTime > endTime then
+		local loopMessage = loop and "SetAnimationLoop" or "SetAnimationOnce"
+		self:BroadcastMessage(loopMessage, ani)
+		endTime = startTime + duration
+	end
+end
+
+function start()
+end
+
+function update()
+	if not id then
+		id = battlemanager:getInstance():getIdByGameobj(self.gameObject) or 0
+	end
+
+	if id ~= 0 then
+		local obj = battlemanager:getInstance():getObj(id)
+		local dir = obj.dir
+		local now = battlemanager:getInstance():getTime()
+		if obj.hp <= 0 then
+			PlayAnimation("DIE",now,1)
+			CS.UnityEngine.GameObject.Destroy(self.gameObject, 1)
+		end
+
+		if nextdir.x ~= dir.x or nextdir.y ~= dir.y then
+			nextdir = dir
+			local ani = "W"
+			if dir.x ~= 0 and dir.y ~= 0 then
+				ani = "U"
+			end
+			PlayAnimation(ani,now,0,true)
+		end
+
+		local animation = obj.animation
+		if animation then
+			PlayAnimation("A",animation.startTime,1)
+		end
+	end
+end
+
+function ondestroy()
+end

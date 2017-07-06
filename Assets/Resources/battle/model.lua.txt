@@ -1,0 +1,272 @@
+local QUEUE_LENGTH = 100
+local json = require "lib.json"
+local MAP_SIZE = {x = 30, y = 30}
+
+local function MIN_MAX(pos)
+	pos.x = math.min(pos.x,MAP_SIZE.x)
+	pos.y = math.min(pos.y,MAP_SIZE.y)
+	pos.x = math.max(pos.x,-MAP_SIZE.x)
+	pos.y = math.max(pos.y,-MAP_SIZE.y)
+end
+
+local function Magnitude( v )
+	return math.sqrt(v.x * v.x + v.y * v.y)
+end
+
+local Model = class("Model")
+
+function Model.create(servertime)
+	return Model.new(servertime)
+end
+
+function Model:ctor(servertime)
+	self.__base = {}
+	self.__state = {}
+	self.__begintime = Model:gettime()
+	self.__offsettime = Model:gettime() - servertime
+	self.__command_queue = {}
+	self.__snapshot = 0
+
+	self.__state_server = {}
+	self.__snapshot_server = 0
+	self.__snap_queue = {}
+	self.__lag = 0
+	math.randomseed(102)
+
+	local method = {}
+	function method.add (state, oriargs)
+		local args = clone(oriargs)
+		local obj = {
+			gameID = args.gameID,
+			heroID = args.heroID,
+			hp = args.hp,
+			pos = args.pos,
+			dir = args.dir,
+			face = args.face,
+			speed = args.speed,
+			lastupdate = args.lastupdate,
+		}
+		state[obj.gameID] = obj
+	end
+
+	function method.move (state, args)
+		local gameID = args.gameID
+		local dir = args.dir
+		local t = args.timestamp
+		local obj = state[gameID]
+		if obj then
+			if obj.hp > 0 then
+				local dis_x = (t - obj.lastupdate) * obj.dir.x * obj.speed.x
+				local dis_y = (t - obj.lastupdate) * obj.dir.y * obj.speed.y
+				obj.pos.x = obj.pos.x + dis_x
+				obj.pos.y = obj.pos.y + dis_y
+				MIN_MAX(obj.pos)
+				obj.dir = dir
+				if dir.x ~= 0 or dir.y ~= 0 then obj.face = dir end
+			end
+			obj.lastupdate = t
+		end
+	end
+
+	function method.revive(state, args)
+		local gameID = args.gameID
+		local obj = state[gameID]
+		if obj then
+			obj.hp = 100
+		end
+	end
+
+	function method.attack (state, args)
+		local gameID = args.gameID
+		local t = args.timestamp
+		local obj = state[gameID]
+		if obj and obj.hp > 0 then
+			local animation = {}
+			animation.aniID = 1
+			animation.startTime = t
+			obj.animation = animation
+		end
+	end
+
+	self.__method = method
+end
+
+function Model:gettime()
+	return CS.UnityEngine.Time.realtimeSinceStartup
+end
+
+function Model:setlag(lag)
+	self.__lag = lag
+end
+
+function Model:timestamp()
+	return Model:gettime() - self.__offsettime + self.__lag
+end
+
+function Model:queue_command(args)
+	local name = args.name
+	local timestamp = args.timestamp
+
+	if not args.name and not args.timestamp then
+		return false
+	end
+
+	local qlen = #self.__command_queue
+	if qlen >= QUEUE_LENGTH then
+		table.remove(self.__command_queue,1)
+		qlen = qlen - 1
+	end
+
+	local cq = self.__command_queue
+	for i = 1, #cq do
+		if timestamp < cq[i].timestamp then
+			table.insert(cq, i, args)
+			return i
+		end
+	end
+	table.insert(cq, args)
+	return #cq
+end
+
+function Model:touch_snapshot(ti)
+	if ti < self.__snapshot then
+		self.__snapinvalid = true
+	end
+end
+
+function Model:apply_command(args)
+	local name = args.name
+	local timestamp = args.timestamp
+
+	if not args.name and not args.timestamp then
+		return false
+	end
+
+	local cq = self.__command_queue
+	local qlen = #cq
+	local timeline = cq[1] and cq[1].timestamp or 0
+	if args.timestamp < timeline then
+		return false, "command expired"
+	end
+
+	if qlen >= QUEUE_LENGTH then
+		self.__method[cq[1].name](self.__base, cq[1])
+		table.remove(self.__command_queue,1)
+		qlen = qlen - 1
+	end
+
+	for i = 1, #cq do
+		if timestamp < cq[i].timestamp then
+			self:touch_snapshot(timestamp)
+			table.insert(cq, i, args)
+			return i
+		end
+	end
+	self:touch_snapshot(timestamp)
+	table.insert(cq, args)
+	return #cq
+end
+
+function Model:snapshot(ti)
+	--assert(ti >= self.__snapshot)
+	local cq = self.__command_queue
+	if self.__snapinvalid then
+		self.__state = clone(self.__base)
+		self.__snapshot = 0
+		self.__snapinvalid = false
+	end
+	for i = 1, #cq do
+		local t = cq[i].timestamp
+		local name = cq[i].name
+		if t > ti then
+			break
+		end
+		if t > self.__snapshot then
+			self.__method[name](self.__state, cq[i])
+		end
+	end
+	for _,obj in pairs(self.__state) do
+		if obj.hp > 0 then
+			local dis_x = (ti - obj.lastupdate) * obj.dir.x * obj.speed.x
+			local dis_y = (ti - obj.lastupdate) * obj.dir.y * obj.speed.y
+			obj.pos.x = obj.pos.x + dis_x
+			obj.pos.y = obj.pos.y + dis_y
+			MIN_MAX(obj.pos)
+		end
+		obj.lastupdate = ti
+	end
+	self.__snapshot = ti
+	return self.__state
+end
+
+function Model:revise_snapshot()
+	local sc = self.__state
+	local ss = self.__state_server
+	for gameID,obj in pairs(ss) do
+		if not sc[gameID] then
+			sc[gameID] = obj
+			sc[gameID].lastupdate = self.__snapshot_server
+		elseif gameID == self.myid then
+			local obj_client = sc[gameID]
+			local tc = self.__snapshot
+			local ts = self.__snapshot_server
+			local distance = {
+				x = obj.pos.x - sc[gameID].pos.x,
+				y = obj.pos.y - sc[gameID].pos.y,
+			}
+			local dis_m = Magnitude(distance)
+			if dis_m < 10 then
+				-- 误差不大，逐帧修正
+				local pos = {
+					x = sc[gameID].pos.x + distance.x / 50,
+					y = sc[gameID].pos.y + distance.y / 50,
+				}
+				sc[gameID].pos = pos
+			else
+				-- 误差较大，直接跳帧修正
+				sc[gameID].pos = obj.pos
+			end
+			sc[gameID].hp = obj.hp
+			sc[gameID].animation = obj.animation
+			sc[gameID].buffList = obj.buffList
+		else
+			local obj_client = sc[gameID]
+			local tc = self.__snapshot
+			local ts = self.__snapshot_server
+			local distance = {
+				x = obj.pos.x - sc[gameID].pos.x,
+				y = obj.pos.y - sc[gameID].pos.y,
+			}
+			local dis_m = Magnitude(distance)
+			if dis_m < 10 then
+				-- 误差不大，逐帧修正
+				local pos = {
+					x = sc[gameID].pos.x + distance.x / 50,
+					y = sc[gameID].pos.y + distance.y / 50,
+				}
+				sc[gameID].pos = pos
+			else
+				-- 误差较大，直接跳帧修正
+				sc[gameID].pos = obj.pos
+			end
+			sc[gameID].dir = obj.dir
+			sc[gameID].face = obj.face
+			sc[gameID].hp = obj.hp
+			sc[gameID].animation = obj.animation
+			sc[gameID].buffList = obj.buffList
+		end
+	end
+	return sc
+end
+
+function Model:sync_server(snapshot)
+	local timestamp = snapshot.time
+	if timestamp > self.__snapshot_server then
+		for _,obj in ipairs(snapshot.state) do
+			self.__state_server[obj.gameID] = obj
+		end
+		self.__snapshot_server = snapshot.time
+	end
+end
+
+return Model

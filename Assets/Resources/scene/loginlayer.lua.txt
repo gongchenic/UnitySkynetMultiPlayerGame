@@ -1,0 +1,61 @@
+local transport = require "net.transport"
+
+-- 注册协议回调函数
+local function RegProtoRet()
+	local function loginRet(data)
+		if data.success == true then
+			self:SendMessageUpwards("setLayerActive", "game")
+			local addData = {
+				data = {}
+			}
+			transport:send("C_2_S_GAME_MATCH",addData)
+		end
+	end
+	transport:register("S_2_C_LOGIN",loginRet)
+end
+
+function start()
+	RegProtoRet()
+
+	-- 连接网络
+	transport:connect()
+
+	local u = CS.UnityEngine.PlayerPrefs.GetString("_TREENAME_")
+	humanbutton:GetComponent("Button").onClick:AddListener(function()
+		local u = "human"
+		local p = "123"
+		transport:setid(u)
+		local data = {
+			username = u,
+			password = p
+		}
+		transport:send("C_2_S_LOGIN",data)
+	end)
+
+	treemanbutton:GetComponent("Button").onClick:AddListener(function()
+		local u = CS.UnityEngine.PlayerPrefs.GetString("_TREENAME_")
+		if not u or string.len(u) == 0 then
+			math.randomseed(os.time())
+			local rand = math.random(10000)
+			u = "treeman" .. rand
+			CS.UnityEngine.PlayerPrefs.SetString("_TREENAME_",u)
+		end
+		local p = "123"
+		transport:setid(u)
+		local data = {
+			username = u,
+			password = p
+		}
+		transport:send("C_2_S_LOGIN",data)
+	end)
+
+	self:SendMessageUpwards("setLayerActive", "login")
+end
+
+function update()
+	transport:receive()
+end
+
+function ondestroy()
+	transport:close()
+end

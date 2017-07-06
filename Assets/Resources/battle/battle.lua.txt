@@ -1,0 +1,104 @@
+local Model = require "battle.model"
+local CmdManager = require "battle.cmdmanager"
+local GRID_SIZE = 1
+
+local Battle = class("Battle")
+
+function Battle.create(info)
+    return Battle.new(info)
+end
+
+function Battle:ctor(info)
+	-- 初始化数据
+	self.info = info
+	self.players = {}
+	self.simulaters = {}
+	self.trees = {}
+	
+	-- 初始阵容
+	self.model = Model.create(info.servertime)
+	self.cmdmanager = CmdManager.create(self.model)
+	self.myid = info.gameID
+	self.model.myid = info.gameID
+	self:initTrees(info.trees)
+end
+
+function Battle:getIdByGameobj(target)
+	for id,gameobj in pairs(self.players) do
+		if target == gameobj then
+			return id
+		end
+	end
+end
+
+function Battle:getObj(id)
+	return self.model.__state[id]
+end
+
+function Battle:getTime()
+	return self.model:gettime()
+end
+
+function Battle:add(id,player)
+	self.players[id] = player
+end
+
+function Battle:initTrees(trees)
+	for id,tree in pairs(trees) do
+		if not self.trees[id] then
+			local prefab = CS.UnityEngine.Resources.Load("Treeman")
+			gameobj = CS.UnityEngine.GameObject.Instantiate(prefab)
+			gameobj.transform:SetParent( CS.UnityEngine.GameObject.Find("BackGround/Game Layer").transform )
+			gameobj.transform.localPosition = CS.UnityEngine.Vector3(tree.pos.x,tree.pos.y,0) * GRID_SIZE
+			gameobj.transform:Find("Name"):GetComponent("Text").text = id
+		end
+	end
+end
+
+local function angle_360(from_,to_)  
+	local v3 = CS.UnityEngine.Vector3.Cross(from_,to_)
+	if v3.z < 0 then  
+	    return CS.UnityEngine.Vector3.Angle(from_,to_)
+	else  
+	    return 360-CS.UnityEngine.Vector3.Angle(from_,to_)
+	end
+end
+
+function Battle:view()
+	local now = self.model:timestamp() - 0.05
+	local snapshot = self.model:snapshot(now)
+	local snapshot = self.model:revise_snapshot()
+	for id,obj in pairs(snapshot) do
+		local gameobj = self.players[id]
+		if obj.hp > 0 then
+			if gameobj then
+				gameobj.transform.localPosition = CS.UnityEngine.Vector3(obj.pos.x,obj.pos.y,0) * GRID_SIZE
+				local tar = CS.UnityEngine.Vector3(obj.face.x,obj.face.y,0)
+				local angle = angle_360(tar,CS.UnityEngine.Vector3(0,1,0))
+				local sight = gameobj.transform:Find("Sight")
+				if sight then
+					sight.localRotation = CS.UnityEngine.Quaternion.Euler(0,0,angle)
+				end
+			else
+				local prefix = (obj.heroID == 100001) and "Treeman" or "Human"
+				local suffix = (id == self.myid) and "P" or ""
+				if suffix == "P" then self.myotype = prefix end
+				local prefabName = prefix .. suffix
+				local prefab = CS.UnityEngine.Resources.Load(prefabName)
+				gameobj = CS.UnityEngine.GameObject.Instantiate(prefab)
+				self.players[id] = gameobj
+				gameobj.transform:SetParent( CS.UnityEngine.GameObject.Find("BackGround/Game Layer").transform )
+				gameobj.transform.localPosition = CS.UnityEngine.Vector3(obj.pos.x,obj.pos.y,0) * GRID_SIZE
+				gameobj.transform:Find("Name"):GetComponent("Text").text = id
+			end
+		else
+			self.players[id] = nil
+		end
+	end
+end
+
+function Battle:sync(snapshot)
+	self.model:sync_server(snapshot)
+end
+
+return Battle

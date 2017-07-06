@@ -1,0 +1,15 @@
+require "lib.functions"
+sclib = require "lib.sclib"
+
+local Battle = require "battle.battle"
+local battlemanager = {}
+
+function battlemanager:createInstance(info)
+	self.instance = Battle.create(info)
+end
+
+function battlemanager:getInstance()
+	return self.instance
+end
+
+return battlemanager

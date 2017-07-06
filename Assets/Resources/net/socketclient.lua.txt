@@ -1,0 +1,50 @@
+local socket = require "net.socket"
+local json = require "lib.json"
+
+local client = {}
+
+function client:connect()
+	local host = "127.0.0.1"
+	local port = 8001
+
+	self.__c = socket.tcp()  
+    self.__c:connect(host, port)    --链接
+    self.__c:settimeout(0)   --非阻塞
+    self.__c:setoption("tcp-nodelay", true)  --去掉优化
+end
+
+function client:close()
+    self.__c:close()
+end
+
+local function send_package(pack)
+	local package = string.pack(">s2", pack)
+	client.__c:send(package)
+end
+
+function client:send(data)
+	send_package(data)
+end
+
+function client:receive()
+    --检测是否有可读的socket
+    -- local recvt, sendt, status = socket.select({self.__c}, nil, 1)
+    -- print("input", #recvt, sendt, status)
+    -- if #recvt <= 0 then
+    --     return
+    -- end
+
+    --先接受两个字节计算包的长度
+    local buffer, err = self.__c:receive(2)
+    if buffer then
+        --计算包的长度 
+        local first, sencond = string.byte(buffer,1,2)
+        local len=first * 256 + sencond --通过位计算长度
+        print(len)
+        --接受整个数据
+        local buffer, err = self.__c:receive(len)
+        return buffer
+    end
+end
+
+return client
